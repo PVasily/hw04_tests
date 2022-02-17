@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.db.models import fields
 from django.template.loader import select_template
 
+
 try:
     from posts.models import Post
 except ImportError:
