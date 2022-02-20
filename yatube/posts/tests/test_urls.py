@@ -7,39 +7,47 @@ from ..models import Post, Group
 User = get_user_model()
 
 
-class StaticURLTests(TestCase):
-    def test_homepage(self):
-        guest_client = Client()
-        response = guest_client.get('/')
-        self.assertEqual(response.status_code, 200)
-
-
 class PostURLTests(TestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.user = User.objects.create(username='auth')
-        PostURLTests.post = Post.objects.create(
+        cls.user = User.objects.create(username='author')
+        cls.admin = User.objects.create(username='admin')
+        cls.post = Post.objects.create(
             author=cls.user,
             text='Тестовая пост',
         )
-        PostURLTests.group = Group.objects.create(
+        cls.group = Group.objects.create(
             title='Test group',
             slug='test-slug',
             description='Test description')
         cls.guest_client = Client()
         cls.authorized_client = Client()
         cls.authorized_client.force_login(cls.user)
+        cls.auth_admin = Client()
+        cls.auth_admin.force_login(cls.admin)
+
+    def test_homepage(self):
+        guest_client = Client()
+        response = guest_client.get('/')
+        self.assertEqual(response.status_code, 200)
 
     def test_post_edit_url(self):
-        """Страница по адресу / использует шаблон posts/index.html."""
-        if self.authorized_client == self.post.author:
-            response = self.authorized_client.get(
-                f'/posts/{self.post.id}/edit/')
-            self.assertEqual(response.status_code, 200)
+        response = self.authorized_client.get(
+            f'/posts/{self.post.id}/edit/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_post_edit_auth_not_author(self):
+        response = self.auth_admin.get(
+            f'/posts/{self.post.id}/edit/')
+        self.assertRedirects(response, f'/posts/{self.post.id}/')
+
+    def test_post_edit_guest(self):
+        response = self.guest_client.get(
+            f'/posts/{self.post.id}/edit/')
+        self.assertRedirects(response, '/auth/login/?next=/posts/1/edit/')
 
     def test_post_create_url(self):
-        """Страница по адресу / использует шаблон posts/index.html."""
         response = self.authorized_client.get('/create/')
         self.assertEqual(response.status_code, 200)
 

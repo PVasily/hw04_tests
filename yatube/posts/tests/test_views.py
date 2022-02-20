@@ -3,49 +3,38 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django import forms
 
+from xmlrpc.client import Boolean
+from itertools import islice
+
 from ..models import Post, Group
+from ..forms import PostForm
 
 
 User = get_user_model()
-
-
-class StaticURLTests(TestCase):
-    def test_homepage(self):
-        # Создаем экземпляр клиента
-        guest_client = Client()
-        # Делаем запрос к главной странице и проверяем статус
-        response = guest_client.get('/')
-        # Утверждаем, что для прохождения теста код должен быть равен 200
-        self.assertEqual(response.status_code, 200)
 
 
 class PostTemplatesTests(TestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        # Создадим запись в БД для проверки доступности адреса task/test-slug/
         cls.user = User.objects.create(username='auth')
-
-        PostTemplatesTests.group = Group.objects.create(
+        cls.form = PostForm
+        cls.guest_client = Client()
+        cls.authorized_client = Client()
+        cls.authorized_client.force_login(cls.user)
+        cls.group = Group.objects.create(
             title='Test group',
             slug='test-slug',
             description='Test description'
         )
-
-        PostTemplatesTests.post = Post.objects.create(
-            id=1,
+        cls.post = Post.objects.create(
             author=cls.user,
             text='Тестовый пост',
-            group=PostTemplatesTests.group
+            group=cls.group
         )
-
-        cls.guest_client = Client()
-        cls.authorized_client = Client()
-        cls.authorized_client.force_login(cls.user)
 
     def test_used_templates(self):
         """Сравнивает соответствие url-адресов используемым шаблонам."""
-
         dict_match = {
             reverse(
                 'posts:group_list',
@@ -81,6 +70,9 @@ class PostTemplatesTests(TestCase):
             'text': forms.fields.CharField,
             'group': forms.fields.ChoiceField
         }
+        form_context = response.context.get('form')
+        self.assertTrue(form_context)
+        self.assertIsInstance(form_context, self.form)
         for value, expected in form_fields.items():
             with self.subTest(value=value):
                 form_field = response.context.get('form').fields.get(value)
@@ -89,11 +81,18 @@ class PostTemplatesTests(TestCase):
     def test_types_fields_forms_post_edit(self):
         response = self.authorized_client.get(reverse(
             'posts:post_edit', kwargs={'post_id': 1}))
-        if self.authorized_client == self.post.author:
+
+        if self.user == self.post.author:
             form_fields = {
                 'text': forms.fields.CharField,
                 'group': forms.fields.ChoiceField
             }
+            is_edit = response.context.get('is_edit')
+            form_context = response.context.get('form')
+            self.assertTrue(is_edit)
+            self.assertEqual(type(is_edit), Boolean)
+            self.assertIsNotNone(form_context)
+            self.assertIsInstance(form_context, self.form)
             for value, expected in form_fields.items():
                 with self.subTest(value=value):
                     form_field = response.context.get('form').fields.get(value)
@@ -107,6 +106,29 @@ class PostTemplatesTests(TestCase):
         self.assertEqual(first_text_0, 'Тестовый пост')
         self.assertEqual(first_group_0, self.group.title)
 
+    def test_group_list_belong_to_group(self):
+        slug = self.group.slug
+        response = self.guest_client.get(reverse(
+            'posts:group_list',
+            kwargs={'slug': slug}))
+        choice_group = response.context['page_obj'][0].group.title
+        self.assertEqual(choice_group, 'Test group')
+
+    def test_posts_profile(self):
+        response = self.guest_client.get(reverse(
+            'posts:profile',
+            kwargs={'username': self.user.username}))
+        for i in range(len(response.context['page_obj'])):
+            username = response.context['page_obj'][i].author.username
+            self.assertEqual(username, 'auth')
+
+    def test_post_detail(self):
+        response = self.guest_client.get(reverse(
+            'posts:post_detail',
+            kwargs={'post_id': self.post.id}))
+        post = response.context['post'].id
+        self.assertEqual(post, 1)
+
 
 class PaginatorTest(TestCase):
 
@@ -115,90 +137,40 @@ class PaginatorTest(TestCase):
         super().setUpClass()
         cls.user = User.objects.create(username='Anonimus')
         cls.guest_client = Client()
-        PaginatorTest.group = Group.objects.create(
+        cls.group = Group.objects.create(
             title='Test group',
             slug='test-slug',
             description='Test description')
-        cls.posts = []
-        for i in range(13):
-            PaginatorTest.post = Post.objects.create(
-                id=i,
-                author=cls.user,
-                text=f'Тестовый пост{i}',
-                group=PaginatorTest.group)
-            cls.posts.append(PaginatorTest.post)
+        cls.batch_size = 13
+        cls.posts = (Post(
+            text=f'Тестовый пост {i}',
+            author=cls.user,
+            group=cls.group) for i in range(cls.batch_size))
+        while True:
+            batch = list(islice(cls.posts, cls.batch_size))
+            if not batch:
+                break
+            Post.objects.bulk_create(batch, cls.batch_size)
 
     def test_paginator(self):
-        slug = PaginatorTest.group.slug
+        # данное исполнение связано с нерешенной ошибкой unhashable dict
+        # при попытке передать num_page в  состав ключа dict_match
+        slug = self.group.slug
         username = self.user.username
-        dict_address = {
-            '/?page=1': 10,
-            f'/group/{slug}/?page=1': 10,
-            f'/profile/{username}/?page=1': 10,
-            '/?page=2': 3,
-            f'/group/{slug}/?page=2': 3,
-            f'/profile/{username}/?page=2': 3
+        num_page = {'page': 2}
+        dict_match = {
+            '/': 10,
+            f'/group/{slug}/': 10,
+            f'/profile/{username}/': 10
         }
-        for address, num in dict_address.items():
+        response = self.guest_client.get('/', num_page)
+        self.assertEqual(len(response.context['page_obj']), 3)
+        response1 = self.guest_client.get(f'/profile/{username}/', num_page)
+        self.assertEqual(len(response1.context['page_obj']), 3)
+        response2 = self.guest_client.get(f'/group/{slug}/', num_page)
+        self.assertEqual(len(response2.context['page_obj']), 3)
+        for address, num in dict_match.items():
             with self.subTest(address=address):
                 response = self.guest_client.get(address)
                 len_page = len(response.context['page_obj'])
                 self.assertEqual(len_page, num)
-
-
-class ContextTest(TestCase):
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        cls.user = User.objects.create(username='Anonimus')
-        cls.admin = User.objects.create(username='admin')
-        ContextTest.group_one = Group.objects.create(
-            title='Test group one',
-            slug='test-slug_one',
-            description='Test description')
-        ContextTest.group_two = Group.objects.create(
-            title='Test group two',
-            slug='test-slug_two',
-            description='Test description')
-        cls.posts = []
-        for i in range(13):
-            if i % 2 == 0:
-                ContextTest.post = Post.objects.create(
-                    id=i,
-                    author=cls.user,
-                    text=f'Тестовый пост{i}',
-                    group=ContextTest.group_one)
-                cls.posts.append(ContextTest.post)
-            else:
-                ContextTest.post = Post.objects.create(
-                    id=i,
-                    author=cls.admin,
-                    text=f'Тестовый пост{i}',
-                    group=ContextTest.group_two)
-                cls.posts.append(ContextTest.post)
-        cls.guest_client = Client()
-        cls.authorized_client = Client()
-        cls.authorized_client.force_login(cls.admin)
-
-    def test_group_list_belong_to_group(self):
-        slug = self.group_one.slug
-        response = self.guest_client.get(reverse(
-            'posts:group_list',
-            kwargs={'slug': slug}))
-        choice_group = response.context['page_obj'][0].group.title
-        self.assertEqual(choice_group, 'Test group one')
-
-    def test_posts_profile(self):
-        response = self.guest_client.get(reverse(
-            'posts:profile',
-            kwargs={'username': self.user.username}))
-        for i in range(len(response.context['page_obj'])):
-            username = response.context['page_obj'][i].author.username
-            self.assertEqual(username, 'Anonimus')
-
-    def test_post_detail(self):
-        response = self.guest_client.get(reverse(
-            'posts:post_detail',
-            kwargs={'post_id': self.post.id}))
-        post = response.context['post'].id
-        self.assertEqual(post, 12)
