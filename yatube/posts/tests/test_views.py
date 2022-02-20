@@ -153,24 +153,21 @@ class PaginatorTest(TestCase):
             Post.objects.bulk_create(batch, cls.batch_size)
 
     def test_paginator(self):
-        # данное исполнение связано с нерешенной ошибкой unhashable dict
-        # при попытке передать num_page в  состав ключа dict_match
         slug = self.group.slug
         username = self.user.username
         num_page = {'page': 2}
-        dict_match = {
-            '/': 10,
-            f'/group/{slug}/': 10,
-            f'/profile/{username}/': 10
-        }
-        response = self.guest_client.get('/', num_page)
-        self.assertEqual(len(response.context['page_obj']), 3)
-        response1 = self.guest_client.get(f'/profile/{username}/', num_page)
-        self.assertEqual(len(response1.context['page_obj']), 3)
-        response2 = self.guest_client.get(f'/group/{slug}/', num_page)
-        self.assertEqual(len(response2.context['page_obj']), 3)
-        for address, num in dict_match.items():
+        qnt_per_first_page = 10
+        qnt_per_last_page = 3
+        tup_addr = (
+            ('/', '', qnt_per_first_page),
+            (f'/group/{slug}/', '', qnt_per_first_page),
+            (f'/profile/{username}/', '', qnt_per_first_page),
+            ('/', num_page, qnt_per_last_page),
+            (f'/profile/{username}/', num_page, qnt_per_last_page),
+            (f'/group/{slug}/', num_page, qnt_per_last_page)
+        )
+        for address, num, qnt in tup_addr:
             with self.subTest(address=address):
-                response = self.guest_client.get(address)
+                response = self.guest_client.get(address, num)
                 len_page = len(response.context['page_obj'])
-                self.assertEqual(len_page, num)
+                self.assertEqual(len_page, qnt)
