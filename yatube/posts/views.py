@@ -19,7 +19,7 @@ def get_paginator(request, page, num):
 def index(request):
     template = 'posts/index.html'
     title = 'Последние обновления на сайте'
-    posts = Post.objects.order_by('-pub_date')
+    posts = Post.objects.all()
     page_obj = get_paginator(request, posts, POSTS_PER_PAGE)
     context = {
         'posts': posts,
@@ -45,7 +45,7 @@ def group_post(request, slug):
 
 def profile(request, username):
     user = get_object_or_404(User, username=username)
-    posts = user.posts.order_by('-pub_date')
+    posts = user.posts.all()
     count = posts.count()
     page_obj = get_paginator(request, posts, POSTS_PER_PAGE)
     context = {

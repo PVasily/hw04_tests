@@ -3,9 +3,6 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django import forms
 
-from xmlrpc.client import Boolean
-from itertools import islice
-
 from ..models import Post, Group
 from ..forms import PostForm
 
@@ -81,22 +78,20 @@ class PostTemplatesTests(TestCase):
     def test_types_fields_forms_post_edit(self):
         response = self.authorized_client.get(reverse(
             'posts:post_edit', kwargs={'post_id': 1}))
-
-        if self.user == self.post.author:
-            form_fields = {
-                'text': forms.fields.CharField,
-                'group': forms.fields.ChoiceField
-            }
-            is_edit = response.context.get('is_edit')
-            form_context = response.context.get('form')
-            self.assertTrue(is_edit)
-            self.assertEqual(type(is_edit), Boolean)
-            self.assertIsNotNone(form_context)
-            self.assertIsInstance(form_context, self.form)
-            for value, expected in form_fields.items():
-                with self.subTest(value=value):
-                    form_field = response.context.get('form').fields.get(value)
-                    self.assertIsInstance(form_field, expected)
+        form_fields = {
+            'text': forms.fields.CharField,
+            'group': forms.fields.ChoiceField
+        }
+        is_edit = response.context.get('is_edit')
+        form_context = response.context.get('form')
+        self.assertTrue(is_edit)
+        self.assertEqual(type(is_edit), bool)
+        self.assertIsNotNone(form_context)
+        self.assertIsInstance(form_context, self.form)
+        for value, expected in form_fields.items():
+            with self.subTest(value=value):
+                form_field = response.context.get('form').fields.get(value)
+                self.assertIsInstance(form_field, expected)
 
     def test_index_page_show_correct_context(self):
         response = self.guest_client.get(reverse('posts:index'))
@@ -141,16 +136,12 @@ class PaginatorTest(TestCase):
             title='Test group',
             slug='test-slug',
             description='Test description')
-        cls.batch_size = 13
-        cls.posts = (Post(
+        BATCH_SIZE = 13
+        cls.list_posts = [Post(
             text=f'Тестовый пост {i}',
             author=cls.user,
-            group=cls.group) for i in range(cls.batch_size))
-        while True:
-            batch = list(islice(cls.posts, cls.batch_size))
-            if not batch:
-                break
-            Post.objects.bulk_create(batch, cls.batch_size)
+            group=cls.group) for i in range(BATCH_SIZE)]
+        cls.posts = Post.objects.bulk_create(cls.list_posts, BATCH_SIZE)
 
     def test_paginator(self):
         slug = self.group.slug
